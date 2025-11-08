@@ -1,221 +1,302 @@
-# v2 OpenAI 兼容服务（FastAPI + 前端）
+# Amazon Q to OpenAI API Bridge
 
-本目录提供一个独立于 v1 的 Python 版本，实现 FastAPI 后端与纯静态前端，功能包括：
-- 账号管理（SQLite 存储，支持登录/删除/刷新/自定义 other 字段，支持启用/禁用 enabled 开关）
-- OpenAI Chat Completions 兼容接口（流式与非流式）
-- 自动刷新令牌（401/403 时重试一次）
-- URL 登录（设备授权，前端触发，最长等待5分钟自动创建账号并可选启用）
-- 将客户端 messages 整理为 “{role}:\n{content}” 文本，替换模板中的占位内容后调用上游
-- OpenAI Key 白名单授权：仅用于防止未授权访问；账号选择与 key 无关，始终从“启用”的账号中随机选择
+将 Amazon Q Developer 转换为 OpenAI 兼容的 API 服务，支持流式和非流式响应。
 
-主要文件：
-- [v2/app.py](v2/app.py)
-- [v2/replicate.py](v2/replicate.py)
-- [v2/templates/streaming_request.json](v2/templates/streaming_request.json)
-- [v2/frontend/index.html](v2/frontend/index.html)
-- [v2/requirements.txt](v2/requirements.txt)
-- [v2/.env.example](v2/.env.example)
+## ✨ 核心特性
 
-数据库：运行时会在 v2 目录下创建 data.sqlite3（accounts 表内置 enabled 列，只从 enabled=1 的账号中选取）。
+- **OpenAI 兼容接口** - 完全兼容 OpenAI Chat Completions API（`/v1/chat/completions`）
+- **账号管理系统** - 支持多账号管理，启用/禁用控制，自动令牌刷新
+- **设备授权登录** - 通过 URL 快速登录并自动创建账号（5分钟超时）
+- **智能负载均衡** - 从启用的账号中随机选择，实现简单的负载分配
+- **API Key 白名单** - 可选的访问控制，支持开发模式
+- **现代化前端** - 美观的 Web 控制台，支持账号管理和 Chat 测试
+- **自动重试机制** - Token 过期时自动刷新并重试请求
 
-## 1. 安装依赖
+## 🚀 快速开始
 
-建议使用虚拟环境：
+### 1. 安装依赖
 
 ```bash
+# 创建虚拟环境
 python -m venv .venv
-.venv\Scripts\pip install -r v2/requirements.txt
-```
 
-若在 Unix:
+# Windows
+.venv\Scripts\activate
+pip install -r requirements.txt
 
-```bash
-python3 -m venv .venv
+# Linux/macOS
 source .venv/bin/activate
-pip install -r v2/requirements.txt
+pip install -r requirements.txt
 ```
 
-## 2. 配置环境变量
-
-复制示例文件生成 .env：
+### 2. 配置环境变量
 
 ```bash
-copy v2\.env.example v2\.env   # Windows
-# 或
-cp v2/.env.example v2/.env     # Unix
+# 复制示例配置
+cp .env.example .env
+
+# 编辑 .env 文件
+# OPENAI_KEYS="key1,key2,key3"  # 可选，留空则为开发模式
 ```
 
-配置 OPENAI_KEYS（OpenAI 风格 API Key 白名单，仅用于授权，与账号无关）。使用逗号分隔：
+**配置说明：**
+- `OPENAI_KEYS` 为空或未设置：开发模式，不校验 Authorization
+- `OPENAI_KEYS` 设置后：仅白名单中的 key 可访问 API
+- API Key 仅用于访问控制，不映射到特定账号
 
-示例：
-```env
-OPENAI_KEYS="key1,key2,key3"
-```
-
-提示：
-- 若 OPENAI_KEYS 为空或未设置，则处于开发模式，不校验 Authorization。
-- 该 Key 仅用于访问控制，不能也不会映射到任意 AWS 账号。
-
-重要：
-- 所有请求在通过授权后，会在“启用”的账号集合中随机选择一个账号执行业务逻辑。
-- OPENAI_KEYS 校验失败返回 401；当白名单为空时不校验。
-- 若没有任何启用账号，将返回 401。
-前端与服务端通过 Authorization: Bearer {key} 进行授权校验（仅验证是否在白名单）；账号选择与 key 无关。
-
-## 3. 启动服务
-
-使用 uvicorn 指定 app 目录启动（无需将 v2 作为包安装）：
+### 3. 启动服务
 
 ```bash
-python -m uvicorn app:app --app-dir v2 --reload --port 8000
+python -m uvicorn app:app --reload --port 8000
 ```
 
 访问：
-- 健康检查：http://localhost:8000/healthz
-- 前端控制台：http://localhost:8000/
+- 🏠 Web 控制台：http://localhost:8000/
+- 💚 健康检查：http://localhost:8000/healthz
 
-## 4. 账号管理
+## 📖 使用指南
 
-- 前端在 “账号管理” 面板支持：列表、创建、删除、刷新、快速编辑 label/accessToken、启用/禁用（enabled）
-- 也可通过 REST API 操作（返回 JSON）
+### 账号管理
 
-创建账号：
+#### 方式一：Web 控制台（推荐）
 
+访问 http://localhost:8000/ 使用可视化界面管理账号：
+- 查看所有账号及状态
+- 创建/删除/编辑账号
+- 启用/禁用账号
+- 刷新 Token
+- URL 登录（设备授权）
+
+#### 方式二：REST API
+
+**创建账号**
 ```bash
-curl -X POST http://localhost:8000/v2/accounts ^
-  -H "content-type: application/json" ^
-  -d "{\"label\":\"main\",\"clientId\":\"...\",\"clientSecret\":\"...\",\"refreshToken\":\"...\",\"accessToken\":null,\"enabled\":true,\"other\":{\"note\":\"可选\"}}"
+curl -X POST http://localhost:8000/v2/accounts \
+  -H "Content-Type: application/json" \
+  -d '{
+    "label": "我的账号",
+    "clientId": "your-client-id",
+    "clientSecret": "your-client-secret",
+    "refreshToken": "your-refresh-token",
+    "enabled": true
+  }'
 ```
 
-列表：
-
+**列出所有账号**
 ```bash
 curl http://localhost:8000/v2/accounts
 ```
 
-更新（切换启用状态）：
-
+**更新账号（切换启用状态）**
 ```bash
-curl -X PATCH http://localhost:8000/v2/accounts/{account_id} ^
-  -H "content-type: application/json" ^
-  -d "{\"enabled\":false}"
+curl -X PATCH http://localhost:8000/v2/accounts/{account_id} \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": false}'
 ```
 
-刷新令牌：
-
+**刷新 Token**
 ```bash
 curl -X POST http://localhost:8000/v2/accounts/{account_id}/refresh
 ```
 
-删除：
-
+**删除账号**
 ```bash
 curl -X DELETE http://localhost:8000/v2/accounts/{account_id}
 ```
 
-无需在 .env 为账号做映射；只需在数据库创建并启用账号即可参与随机选择。
+### URL 登录（设备授权）
 
-### URL 登录（设备授权，5分钟超时）
+快速添加账号的最简单方式：
 
-- 前端已在“账号管理”面板提供“开始登录”和“等待授权并创建账号”入口，打开验证链接完成登录后将自动创建账号（可选启用）。
-- 也可直接调用以下 API：
-  - POST /v2/auth/start
-    - 请求体（可选）：
-      - label: string（账号标签）
-      - enabled: boolean（创建后是否启用，默认 true）
-    - 返回：
-      - authId: string
-      - verificationUriComplete: string（浏览器打开该链接完成登录）
-      - userCode: string
-      - expiresIn: number（秒）
-      - interval: number（建议轮询间隔，秒）
-  - POST /v2/auth/claim/{authId}
-    - 阻塞等待设备授权完成，最长 5 分钟
-    - 成功返回：
-      - { "status": "completed", "account": { 新建账号对象 } }
-    - 超时返回 408，错误返回 502
-  - GET /v2/auth/status/{authId}
-    - 返回当前状态 { status, remaining, error, accountId }，remaining 为预计剩余秒数
-- 流程建议：
-  1. 调用 /v2/auth/start 获取 verificationUriComplete，并在新窗口打开该链接
-  2. 用户在浏览器完成登录
-  3. 调用 /v2/auth/claim/{authId} 等待创建账号（最多 5 分钟）；或轮询 /v2/auth/status/{authId} 查看状态
+1. **启动登录流程**
+```bash
+curl -X POST http://localhost:8000/v2/auth/start \
+  -H "Content-Type: application/json" \
+  -d '{"label": "新账号", "enabled": true}'
+```
 
-## 5. OpenAI 兼容接口
-
-接口：POST /v1/chat/completions
-
-请求体（示例，非流式）：
-
+返回：
 ```json
 {
-  "model": "claude-sonnet-4",
-  "stream": false,
-  "messages": [
-    {"role":"system","content":"你是一个乐于助人的助手"},
-    {"role":"user","content":"你好，请讲一个简短的故事"}
-  ]
+  "authId": "xxx",
+  "verificationUriComplete": "https://...",
+  "userCode": "ABCD-1234",
+  "expiresIn": 600,
+  "interval": 1
 }
 ```
 
-授权与账号选择：
-- 若配置了 OPENAI_KEYS，则 Authorization: Bearer {key} 必须在白名单中，否则 401。
-- 若 OPENAI_KEYS 为空或未设置，开发模式下不校验 Authorization。
-- 账号选择策略：在所有 enabled=1 的账号中随机选择；若无可用账号，返回 401。
-- 被选账号缺少 accessToken 时，自动尝试刷新一次（成功后重试上游请求）。
+2. **在浏览器中打开 `verificationUriComplete` 完成登录**
 
-非流式调用（以 curl 为例）：
-
+3. **等待并创建账号**（最多5分钟）
 ```bash
-curl -X POST http://localhost:8000/v1/chat/completions ^
-  -H "content-type: application/json" ^
-  -H "authorization: Bearer key1" ^
-  -d "{\"model\":\"claude-sonnet-4\",\"stream\":false,\"messages\":[{\"role\":\"user\",\"content\":\"你好\"}]}"
+curl -X POST http://localhost:8000/v2/auth/claim/{authId}
 ```
 
-流式（SSE）调用：
+成功后自动创建并启用账号。
+
+### OpenAI 兼容 API
+
+#### 非流式请求
 
 ```bash
-curl -N -X POST http://localhost:8000/v1/chat/completions ^
-  -H "content-type: application/json" ^
-  -H "authorization: Bearer key2" ^
-  -d "{\"model\":\"claude-sonnet-4\",\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"讲一个笑话\"}]}"
+curl -X POST http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-api-key" \
+  -d '{
+    "model": "claude-sonnet-4",
+    "stream": false,
+    "messages": [
+      {"role": "system", "content": "你是一个乐于助人的助手"},
+      {"role": "user", "content": "你好，请讲一个简短的故事"}
+    ]
+  }'
 ```
 
-响应格式严格遵循 OpenAI Chat Completions 标准：
-- 非流式：返回一个 chat.completion 对象
-- 流式：返回 chat.completion.chunk 的 SSE 片段，最后以 data: [DONE] 结束
+#### 流式请求（SSE）
 
-## 6. 历史构造与请求复刻
+```bash
+curl -N -X POST http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-api-key" \
+  -d '{
+    "model": "claude-sonnet-4",
+    "stream": true,
+    "messages": [
+      {"role": "user", "content": "讲一个笑话"}
+    ]
+  }'
+```
 
-- 服务将 messages 整理为 “{role}:\n{content}” 文本
-- 替换模板 [v2/templates/streaming_request.json](v2/templates/streaming_request.json) 中的占位 “你好，你必须讲个故事”
-- 然后按 v1 思路重放请求逻辑，但不依赖 v1 代码，具体实现见 [v2/replicate.py](v2/replicate.py)
+#### Python 示例
 
-## 7. 自动刷新令牌
+```python
+import openai
 
-- 请求上游出现 401/403 时，会尝试刷新一次后重试
-- 也可在前端手动点击某账号的 “刷新Token” 按钮
+client = openai.OpenAI(
+    base_url="http://localhost:8000/v1",
+    api_key="your-api-key"  # 如果配置了 OPENAI_KEYS
+)
 
-## 8. 前端说明
+response = client.chat.completions.create(
+    model="claude-sonnet-4",
+    messages=[
+        {"role": "user", "content": "你好"}
+    ]
+)
 
-- 页面路径：[v2/frontend/index.html](v2/frontend/index.html)，由后端根路由 “/” 提供
-- 功能：管理账号（含启用开关） + 触发 Chat 请求（支持流式与非流式显示）
-- 在页面顶部设置 API Base 与 Authorization（OpenAI Key）
+print(response.choices[0].message.content)
+```
 
-## 9. 运行排错
+## 🔐 授权与账号选择
 
-- 导入失败：使用 --app-dir v2 方式启动 uvicorn
-- 401/403：检查账号的 clientId/clientSecret/refreshToken 是否正确，或手动刷新，或确认账号 enabled=1
-- 未选到账号：检查 OPENAI_KEYS 映射与账号启用状态；对于通配池 key:* 需保证至少有一个启用账号
-- 无响应/超时：检查网络或上游服务可达性
+### 授权机制
+- **开发模式**（`OPENAI_KEYS` 未设置）：不校验 Authorization
+- **生产模式**（`OPENAI_KEYS` 已设置）：必须提供白名单中的 key
 
-## 10. 设计与来源
+### 账号选择策略
+- 从所有 `enabled=1` 的账号中**随机选择**
+- API Key 不映射到特定账号
+- 无可用账号时返回 401
 
-- 核心重放与事件流解析来自 v1 的思路，已抽取为 [v2/replicate.py](v2/replicate.py)
-- 后端入口：[v2/app.py](v2/app.py)
-- 模板请求：[v2/templates/streaming_request.json](v2/templates/streaming_request.json)
+### Token 刷新
+- 请求时若账号缺少 accessToken，自动刷新
+- 上游返回 401/403 时，自动刷新并重试一次
+- 可手动调用刷新接口
 
-## 11. 许可证
+## 📁 项目结构
 
-仅供内部集成与测试使用。
+```
+.
+├── app.py                          # FastAPI 主应用
+├── auth_flow.py                    # 设备授权登录
+├── replicate.py                    # Amazon Q 请求复刻
+├── requirements.txt                # Python 依赖
+├── .env.example                    # 环境变量示例
+├── .gitignore                      # Git 忽略规则
+├── data.sqlite3                    # SQLite 数据库（自动创建）
+├── frontend/
+│   └── index.html                  # Web 控制台
+└── templates/
+    └── streaming_request.json      # 请求模板
+```
+
+## 🛠️ 技术栈
+
+- **后端**: FastAPI + Python 3.8+
+- **数据库**: SQLite3
+- **前端**: 纯 HTML/CSS/JavaScript
+- **认证**: AWS OIDC 设备授权流程
+
+## 🔧 高级配置
+
+### 环境变量
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `OPENAI_KEYS` | API Key 白名单（逗号分隔） | 空（开发模式） |
+
+### 数据库结构
+
+```sql
+CREATE TABLE accounts (
+    id TEXT PRIMARY KEY,
+    label TEXT,
+    clientId TEXT,
+    clientSecret TEXT,
+    refreshToken TEXT,
+    accessToken TEXT,
+    other TEXT,                    -- JSON 格式的额外信息
+    last_refresh_time TEXT,
+    last_refresh_status TEXT,
+    created_at TEXT,
+    updated_at TEXT,
+    enabled INTEGER DEFAULT 1      -- 1=启用, 0=禁用
+);
+```
+
+## 🐛 故障排查
+
+### 401 Unauthorized
+- 检查 `OPENAI_KEYS` 配置
+- 确认至少有一个 `enabled=1` 的账号
+- 验证账号的 clientId/clientSecret/refreshToken 正确
+
+### Token 刷新失败
+- 检查网络连接
+- 验证 refreshToken 是否过期
+- 查看账号的 `last_refresh_status` 字段
+
+### 无响应/超时
+- 检查 Amazon Q 服务可达性
+- 查看服务日志排查错误
+
+## 📝 API 端点
+
+### 账号管理
+- `POST /v2/accounts` - 创建账号
+- `GET /v2/accounts` - 列出所有账号
+- `GET /v2/accounts/{id}` - 获取账号详情
+- `PATCH /v2/accounts/{id}` - 更新账号
+- `DELETE /v2/accounts/{id}` - 删除账号
+- `POST /v2/accounts/{id}/refresh` - 刷新 Token
+
+### 设备授权
+- `POST /v2/auth/start` - 启动登录流程
+- `GET /v2/auth/status/{authId}` - 查询登录状态
+- `POST /v2/auth/claim/{authId}` - 等待并创建账号
+
+### OpenAI 兼容
+- `POST /v1/chat/completions` - Chat Completions API
+
+### 其他
+- `GET /` - Web 控制台
+- `GET /healthz` - 健康检查
+
+## 📄 许可证
+
+本项目仅供学习和测试使用。
+
+## 🤝 贡献
+
+欢迎提交 Issue 和 Pull Request！
