@@ -307,6 +307,37 @@ async def _list_enabled_accounts(conn: aiosqlite.Connection) -> List[Dict[str, A
         rows = await cursor.fetchall()
         return [_row_to_dict(r) for r in rows]
 
+async def _list_disabled_accounts(conn: aiosqlite.Connection) -> List[Dict[str, Any]]:
+    conn.row_factory = aiosqlite.Row
+    async with conn.execute("SELECT * FROM accounts WHERE enabled=0 ORDER BY created_at DESC") as cursor:
+        rows = await cursor.fetchall()
+        return [_row_to_dict(r) for r in rows]
+
+async def verify_account(account: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
+    """验证账号可用性"""
+    try:
+        account = await refresh_access_token_in_db(account['id'])
+        test_request = {
+            "conversationState": {
+                "currentMessage": {"userInputMessage": {"content": "hello"}},
+                "chatTriggerType": "MANUAL"
+            }
+        }
+        _, _, tracker, event_gen = await send_chat_request(
+            access_token=account['accessToken'],
+            messages=[],
+            stream=True,
+            raw_payload=test_request
+        )
+        if event_gen:
+            async for _ in event_gen:
+                break
+        return True, None
+    except Exception as e:
+        if "AccessDenied" in str(e) or "403" in str(e):
+            return False, "AccessDenied"
+        return False, None
+
 async def resolve_account_for_key(bearer_key: Optional[str]) -> Dict[str, Any]:
     """
     Authorize request by OPENAI_KEYS (if configured), then select an AWS account.
@@ -336,6 +367,9 @@ class AccountCreate(BaseModel):
     accessToken: Optional[str] = None
     other: Optional[Dict[str, Any]] = None
     enabled: Optional[bool] = True
+
+class BatchAccountCreate(BaseModel):
+    accounts: List[AccountCreate]
 
 class AccountUpdate(BaseModel):
     label: Optional[str] = None
@@ -1021,7 +1055,6 @@ if CONSOLE_ENABLED:
         now = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime())
         acc_id = str(uuid.uuid4())
         other_str = json.dumps(body.other, ensure_ascii=False) if body.other is not None else None
-        enabled_val = 1 if (body.enabled is None or body.enabled) else 0
         async with _conn() as conn:
             conn.row_factory = aiosqlite.Row
             await conn.execute(
@@ -1041,13 +1074,57 @@ if CONSOLE_ENABLED:
                     "never",
                     now,
                     now,
-                    enabled_val,
+                    0,
                 ),
             )
             await conn.commit()
             async with conn.execute("SELECT * FROM accounts WHERE id=?", (acc_id,)) as cursor:
                 row = await cursor.fetchone()
+                account = _row_to_dict(row)
+        
+        verify_success, fail_reason = await verify_account(account)
+        async with _conn() as conn:
+            if verify_success:
+                await conn.execute("UPDATE accounts SET enabled=1, updated_at=? WHERE id=?", (now, acc_id))
+            elif fail_reason:
+                other_dict = json.loads(other_str) if other_str else {}
+                other_dict['failedReason'] = fail_reason
+                await conn.execute("UPDATE accounts SET other=?, updated_at=? WHERE id=?", (json.dumps(other_dict, ensure_ascii=False), now, acc_id))
+            await conn.commit()
+            conn.row_factory = aiosqlite.Row
+            async with conn.execute("SELECT * FROM accounts WHERE id=?", (acc_id,)) as cursor:
+                row = await cursor.fetchone()
                 return _row_to_dict(row)
+
+    @app.post("/v2/accounts/batch")
+    async def batch_create_accounts(request: BatchAccountCreate):
+        results = []
+        success_count = 0
+        failed_count = 0
+        for i, account_data in enumerate(request.accounts):
+            try:
+                now = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime())
+                acc_id = str(uuid.uuid4())
+                other_str = json.dumps(account_data.other, ensure_ascii=False) if account_data.other else None
+                async with _conn() as conn:
+                    await conn.execute(
+                        """
+                        INSERT INTO accounts (id, label, clientId, clientSecret, refreshToken, accessToken, other, last_refresh_time, last_refresh_status, created_at, updated_at, enabled)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (acc_id, account_data.label or f"批量账号 {i+1}", account_data.clientId, account_data.clientSecret, account_data.refreshToken, account_data.accessToken, other_str, None, "never", now, now, 0),
+                    )
+                    await conn.commit()
+                    conn.row_factory = aiosqlite.Row
+                    async with conn.execute("SELECT * FROM accounts WHERE id=?", (acc_id,)) as cursor:
+                        row = await cursor.fetchone()
+                        account = _row_to_dict(row)
+                results.append({"index": i, "status": "success", "account": account})
+                success_count += 1
+            except Exception as e:
+                results.append({"index": i, "status": "failed", "error": str(e)})
+                failed_count += 1
+        return {"total": len(request.accounts), "success": success_count, "failed": failed_count, "results": results}
 
     @app.get("/v2/accounts")
     async def list_accounts():
@@ -1136,12 +1213,50 @@ async def health():
 # Startup / Shutdown Events
 # ------------------------------------------------------------------------------
 
+async def _verify_disabled_accounts_loop():
+    """后台验证禁用账号任务"""
+    while True:
+        try:
+            await asyncio.sleep(1800)
+            async with _conn() as conn:
+                accounts = await _list_disabled_accounts(conn)
+                if accounts:
+                    for account in accounts:
+                        other = account.get('other')
+                        if other:
+                            try:
+                                other_dict = json.loads(other) if isinstance(other, str) else other
+                                if other_dict.get('failedReason') == 'AccessDenied':
+                                    continue
+                            except:
+                                pass
+                        try:
+                            verify_success, fail_reason = await verify_account(account)
+                            now = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime())
+                            if verify_success:
+                                await conn.execute("UPDATE accounts SET enabled=1, updated_at=? WHERE id=?", (now, account['id']))
+                            elif fail_reason:
+                                other_dict = {}
+                                if account.get('other'):
+                                    try:
+                                        other_dict = json.loads(account['other']) if isinstance(account['other'], str) else account['other']
+                                    except:
+                                        pass
+                                other_dict['failedReason'] = fail_reason
+                                await conn.execute("UPDATE accounts SET other=?, updated_at=? WHERE id=?", (json.dumps(other_dict, ensure_ascii=False), now, account['id']))
+                            await conn.commit()
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+
 @app.on_event("startup")
 async def startup_event():
     """Initialize database and start background tasks on startup."""
     await _init_global_client()
     await _ensure_db()
     asyncio.create_task(_refresh_stale_tokens())
+    asyncio.create_task(_verify_disabled_accounts_loop())
 
 @app.on_event("shutdown")
 async def shutdown_event():
