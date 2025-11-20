@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  q2api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: q2api
+    ports:
+      - "${PORT:-8000}:8000"
+      - "${FEEDER_PORT:-8001}:8001"
+    environment:
+      - OPENAI_KEYS=${OPENAI_KEYS}
+      - MAX_ERROR_COUNT=${MAX_ERROR_COUNT:-100}
+      - HTTP_PROXY=${HTTP_PROXY}
+      - ENABLE_CONSOLE=${ENABLE_CONSOLE:-true}
+      - PORT=${PORT:-8000}
+      - FEEDER_PORT=${FEEDER_PORT:-8001}
+      - API_SERVER=${API_SERVER:-http://localhost:8000}
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    command: >
+      sh -c "uvicorn app:app --host 0.0.0.0 --port ${PORT:-8000} --workers 4 &
+             cd account-feeder && python app.py"
+    healthcheck:
+      test: ["CMD", "sh", "-c", "curl -f http://localhost:8000/healthz && curl -f http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3

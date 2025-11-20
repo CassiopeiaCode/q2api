@@ -35,7 +35,36 @@
 
 ## 🚀 快速开始
 
-### 1. 安装依赖
+### 方式一：Docker Compose（推荐）
+
+最简单的部署方式，一键启动主服务和账号投喂服务：
+
+```bash
+# 1. 复制环境变量配置
+cp .env.example .env
+
+# 2. 编辑 .env 文件（可选）
+# 配置 OPENAI_KEYS、MAX_ERROR_COUNT 等
+
+# 3. 启动所有服务
+docker-compose up -d
+
+# 4. 查看日志
+docker-compose logs -f
+
+# 5. 停止服务
+docker-compose down
+```
+
+服务访问地址：
+- 🏠 主服务 Web 控制台：http://localhost:8000/
+- 🎁 账号投喂服务：http://localhost:8001/
+- 💚 健康检查：http://localhost:8000/healthz
+- 📘 API 文档：http://localhost:8000/docs
+
+### 方式二：本地开发
+
+#### 1. 安装依赖
 
 ```bash
 # 创建虚拟环境（推荐）
@@ -50,7 +79,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2. 配置环境变量
+#### 2. 配置环境变量
 
 ```bash
 # 复制示例配置
@@ -62,6 +91,8 @@ cp .env.example .env
 **.env 配置说明：**
 
 ```bash
+# ============ 主服务配置 ============
+
 # OpenAI 风格 API Key 白名单（仅用于授权，与账号无关）
 # 多个用逗号分隔，例如：OPENAI_KEYS="key1,key2,key3"
 # 留空则为开发模式，不校验 Authorization
@@ -77,6 +108,16 @@ HTTP_PROXY=""
 # 管理控制台开关（默认启用）
 # 设置为 "false" 或 "0" 可禁用管理控制台和相关API端点
 ENABLE_CONSOLE="true"
+
+# ============ 账号投喂服务配置 ============
+
+# 投喂服务端口（默认 8001）
+FEEDER_PORT=8001
+
+# 主服务地址（投喂服务需要连接到主服务）
+# Docker Compose 环境使用：http://q2api:8000
+# 本地开发环境使用：http://localhost:8000
+API_SERVER=http://localhost:8000
 ```
 
 **配置要点：**
@@ -86,22 +127,76 @@ ENABLE_CONSOLE="true"
 - 账号选择策略：从所有启用账号中随机选择
 - `ENABLE_CONSOLE` 设为 `false` 或 `0`：禁用 Web 管理控制台和账号管理 API
 
-### 3. 启动服务
+#### 3. 启动服务
 
 ```bash
-# 开发模式（自动重载）
+# 启动主服务（开发模式）
 python -m uvicorn app:app --reload --port 8000
 
-# 生产模式
-python -m uvicorn app:app --host 0.0.0.0 --port 8000 --workers 4
+# 启动账号投喂服务（另一个终端）
+cd account-feeder
+python app.py
 ```
 
 访问：
-- 🏠 Web 控制台：http://localhost:8000/
+- 🏠 主服务 Web 控制台：http://localhost:8000/
+- 🎁 账号投喂服务：http://localhost:8001/
 - 💚 健康检查：http://localhost:8000/healthz
 - 📘 API 文档：http://localhost:8000/docs
 
 ## 📖 使用指南
+
+### 账号投喂服务 🎁
+
+账号投喂服务是一个独立的 Web 应用，让其他人可以通过简单的 URL 登录方式投喂 Amazon Q 账号到主服务。
+
+#### 特点
+- ✅ 友好的 Web 界面，无需技术背景
+- ✅ URL 登录（设备授权），5分钟内完成
+- ✅ 支持手动输入凭据投喂
+- ✅ 支持批量投喂账号
+- ✅ 自动调用主服务创建账号
+
+#### 使用方式
+
+**方式一：URL 登录（推荐）**
+
+1. 访问投喂服务：http://localhost:8001/
+2. 填写账号标签（可选）
+3. 点击"🚀 开始登录"按钮
+4. 在自动打开的授权页面完成登录
+5. 返回投喂页面，点击"⏳ 等待授权并创建账号"
+6. 等待最多 5 分钟，账号自动创建并投喂到主服务
+
+**方式二：手动投喂**
+
+如果已有 `clientId`、`clientSecret`、`refreshToken`，可以直接在投喂页面的"手动投喂账号"区域填写并提交。
+
+**方式三：批量投喂**
+
+准备 JSON 数组格式的账号列表，在"批量投喂账号"区域粘贴并提交：
+
+```json
+[
+  {
+    "label": "账号1",
+    "clientId": "xxx",
+    "clientSecret": "xxx",
+    "refreshToken": "xxx"
+  },
+  {
+    "label": "账号2",
+    "clientId": "yyy",
+    "clientSecret": "yyy",
+    "refreshToken": "yyy"
+  }
+]
+```
+
+#### 注意事项
+- ⏱️ URL 登录有 5 分钟超时限制
+- 🔗 确保主服务正常运行且可访问
+- 🔒 建议在内网环境使用，避免暴露到公网
 
 ### 账号管理
 
