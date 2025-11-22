@@ -1,37 +1,162 @@
 <!DOCTYPE html>
-<html lang="en" class="h-full">
+<html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Login - Q2API</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-        tailwind.config={theme:{extend:{colors:{border:"hsl(0 0% 89%)",input:"hsl(0 0% 89%)",ring:"hsl(0 0% 3.9%)",background:"hsl(0 0% 100%)",foreground:"hsl(0 0% 3.9%)",primary:{DEFAULT:"hsl(0 0% 9%)",foreground:"hsl(0 0% 98%)"},secondary:{DEFAULT:"hsl(0 0% 96.1%)",foreground:"hsl(0 0% 9%)"},muted:{DEFAULT:"hsl(0 0% 96.1%)",foreground:"hsl(0 0% 45.1%)"},destructive:{DEFAULT:"hsl(0 84.2% 60.2%)",foreground:"hsl(0 0% 98%)"}}}}}
-    </script>
     <style>
-        @keyframes slide-up{from{transform:translateY(100%);opacity:0}to{transform:translateY(0);opacity:1}}
-        .animate-slide-up{animation:slide-up .3s ease-out}
+        :root {
+            --bg:#0a0e1a;
+            --panel:#0f1420;
+            --muted:#8b95a8;
+            --text:#e8f0ff;
+            --accent:#4f8fff;
+            --danger:#ff4757;
+            --border:#1a2332;
+            --glow:rgba(79,143,255,.15);
+        }
+        * { box-sizing:border-box; }
+        html, body { height:100%; margin:0; }
+        body {
+            background:radial-gradient(ellipse at top, #0f1624 0%, #0a0e1a 100%);
+            color:var(--text);
+            font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,PingFang SC,Hiragino Sans GB,Microsoft YaHei,Noto Sans,Arial,sans-serif;
+            line-height:1.6;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            min-height:100vh;
+            padding:20px;
+        }
+        .container {
+            width:100%;
+            max-width:420px;
+        }
+        .header {
+            text-align:center;
+            margin-bottom:32px;
+        }
+        h1 {
+            font-size:32px;
+            font-weight:700;
+            margin:0 0 8px;
+            background:linear-gradient(135deg,#4f8fff,#7b9fff);
+            -webkit-background-clip:text;
+            -webkit-text-fill-color:transparent;
+            background-clip:text;
+        }
+        .subtitle {
+            color:var(--muted);
+            font-size:14px;
+        }
+        .panel {
+            background:linear-gradient(145deg,rgba(15,20,32,.8),rgba(10,14,26,.9));
+            border:1px solid var(--border);
+            border-radius:16px;
+            padding:32px;
+            box-shadow:0 20px 60px rgba(0,0,0,.4),0 0 0 1px rgba(79,143,255,.08),inset 0 1px 0 rgba(255,255,255,.03);
+            backdrop-filter:blur(12px);
+        }
+        .field {
+            margin-bottom:24px;
+        }
+        label {
+            display:block;
+            color:var(--muted);
+            font-size:13px;
+            font-weight:500;
+            margin-bottom:8px;
+        }
+        input {
+            width:100%;
+            background:rgba(12,16,28,.6);
+            color:var(--text);
+            border:1px solid var(--border);
+            border-radius:12px;
+            padding:12px 14px;
+            outline:none;
+            transition:all .2s;
+            font-size:14px;
+            box-shadow:inset 0 1px 2px rgba(0,0,0,.2);
+        }
+        input:focus {
+            border-color:var(--accent);
+            box-shadow:0 0 0 3px var(--glow),inset 0 1px 2px rgba(0,0,0,.2);
+            background:rgba(12,16,28,.8);
+        }
+        button {
+            width:100%;
+            background:linear-gradient(135deg,#2563eb,#1e40af);
+            color:#fff;
+            border:none;
+            border-radius:12px;
+            padding:12px 20px;
+            font-weight:600;
+            font-size:14px;
+            cursor:pointer;
+            transition:all .2s;
+            box-shadow:0 4px 16px rgba(37,99,235,.3),inset 0 1px 0 rgba(255,255,255,.1);
+            position:relative;
+            overflow:hidden;
+        }
+        button:before {
+            content:'';
+            position:absolute;
+            top:0;left:0;right:0;bottom:0;
+            background:linear-gradient(135deg,rgba(255,255,255,.1),transparent);
+            opacity:0;
+            transition:opacity .2s;
+        }
+        button:hover {
+            transform:translateY(-1px);
+            box-shadow:0 6px 20px rgba(37,99,235,.4),inset 0 1px 0 rgba(255,255,255,.15);
+        }
+        button:hover:before { opacity:1; }
+        button:active { transform:translateY(0); }
+        button:disabled {
+            opacity:.5;
+            cursor:not-allowed;
+            transform:none;
+        }
+        @keyframes slide-up {
+            from { transform:translateY(100%); opacity:0; }
+            to { transform:translateY(0); opacity:1; }
+        }
+        .toast {
+            position:fixed;
+            bottom:20px;
+            right:20px;
+            padding:12px 20px;
+            border-radius:12px;
+            color:#fff;
+            font-size:14px;
+            font-weight:500;
+            box-shadow:0 8px 24px rgba(0,0,0,.4);
+            animation:slide-up .3s ease-out;
+            z-index:1000;
+        }
+        .toast.error {
+            background:linear-gradient(135deg,#dc2626,#991b1b);
+        }
+        .toast.success {
+            background:linear-gradient(135deg,#16a34a,#15803d);
+        }
     </style>
 </head>
-<body class="h-full bg-background text-foreground antialiased">
-    <div class="flex min-h-full flex-col justify-center py-12 px-4 sm:px-6 lg:px-8">
-        <div class="sm:mx-auto sm:w-full sm:max-w-md">
-            <div class="text-center">
-                <h1 class="text-4xl font-bold">Q2API</h1>
-                <p class="mt-2 text-sm text-muted-foreground">Admin Console</p>
-            </div>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Q2API</h1>
+            <p class="subtitle">Admin Console</p>
         </div>
-
-        <div class="sm:mx-auto sm:w-full sm:max-w-md">
-            <div class="bg-background py-8 px-4 sm:px-10 rounded-lg">
-                <form id="loginForm" class="space-y-6">
-                    <div class="space-y-2">
-                        <label for="password" class="text-sm font-medium">Password</label>
-                        <input type="password" id="password" name="password" required class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50" placeholder="Enter password" autofocus>
-                    </div>
-                    <button type="submit" id="loginButton" class="inline-flex items-center justify-center rounded-md font-medium transition-colors bg-primary text-primary-foreground hover:bg-primary/90 h-10 w-full disabled:opacity-50">Login</button>
-                </form>
-            </div>
+        <div class="panel">
+            <form id="loginForm">
+                <div class="field">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" name="password" required placeholder="Enter password" autofocus>
+                </div>
+                <button type="submit" id="loginButton">Login</button>
+            </form>
         </div>
     </div>
 
@@ -63,8 +188,8 @@
         });
 
         function showToast(m,t='error'){
-            const d=document.createElement('div'),bc={success:'bg-green-600',error:'bg-destructive',info:'bg-primary'};
-            d.className=`fixed bottom-4 right-4 ${bc[t]||bc.error} text-white px-4 py-2.5 rounded-lg shadow-lg text-sm font-medium z-50 animate-slide-up`;
+            const d=document.createElement('div');
+            d.className='toast '+t;
             d.textContent=m;
             document.body.appendChild(d);
             setTimeout(()=>{
@@ -73,7 +198,6 @@
                 setTimeout(()=>d.parentNode&&document.body.removeChild(d),300)
             },2000);
         }
-
     </script>
 </body>
 </html>
