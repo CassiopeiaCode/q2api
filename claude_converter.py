@@ -130,13 +130,13 @@ def merge_user_messages(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
     
     return result
 
-def process_history(messages: List[ClaudeMessage]) -> List[Dict[str, Any]]:
+def process_history(messages: List[ClaudeMessage], tools: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
     """Process history messages to match Amazon Q format (alternating user/assistant)."""
     history = []
     seen_tool_use_ids = set()
-    
+
     raw_history = []
-    
+
     # First pass: convert individual messages
     for msg in messages:
         if msg.role == "user":
@@ -195,9 +195,11 @@ def process_history(messages: List[ClaudeMessage]) -> List[Dict[str, Any]]:
                     "currentWorkingDirectory": "/"
                 }
             }
+            if tools:
+                user_ctx["tools"] = tools
             if tool_results:
                 user_ctx["toolResults"] = tool_results
-                
+
             u_msg = {
                 "content": text_content,
                 "userInputMessageContext": user_ctx,
@@ -394,7 +396,7 @@ def convert_claude_to_amazonq_request(req: ClaudeRequest, conversation_id: Optio
         
     # 7. History
     history_msgs = req.messages[:-1] if len(req.messages) > 1 else []
-    aq_history = process_history(history_msgs)
+    aq_history = process_history(history_msgs, aq_tools if aq_tools else None)
     
     # 8. Final Body
     return {
