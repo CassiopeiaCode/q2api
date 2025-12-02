@@ -18,3 +18,4 @@ class ClaudeRequest(BaseModel):
     tools: Optional[List[ClaudeTool]] = None
     stream: bool = False
     system: Optional[Union[str, List[Dict[str, Any]]]] = None
+    thinking: Optional[Dict[str, Any]] = None

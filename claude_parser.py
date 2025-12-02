@@ -220,3 +220,21 @@ def build_tool_use_input_delta(index: int, input_json_delta: str) -> str:
         }
     }
     return _sse_format("content_block_delta", data)
+
+def build_thinking_block_start(index: int) -> str:
+    """Build thinking content_block_start SSE event."""
+    data = {
+        "type": "content_block_start",
+        "index": index,
+        "content_block": {"type": "thinking", "thinking": ""}
+    }
+    return _sse_format("content_block_start", data)
+
+def build_thinking_delta(index: int, text: str) -> str:
+    """Build thinking content_block_delta SSE event."""
+    data = {
+        "type": "content_block_delta",
+        "index": index,
+        "delta": {"type": "thinking_delta", "thinking": text}
+    }
+    return _sse_format("content_block_delta", data)

@@ -258,7 +258,11 @@ def convert_claude_to_amazonq_request(req: ClaudeRequest, conversation_id: Optio
     """Convert ClaudeRequest to Amazon Q request body."""
     if conversation_id is None:
         conversation_id = str(uuid.uuid4())
-        
+
+    # 0. Check for thinking mode
+    enable_thinking = req.thinking is not None and req.thinking.get("type") == "enabled"
+    thinking_budget = req.thinking.get("budget_tokens") if req.thinking else None
+
     # 1. Tools
     aq_tools = []
     long_desc_tools = []
@@ -360,6 +364,22 @@ def convert_claude_to_amazonq_request(req: ClaudeRequest, conversation_id: Optio
             f"{formatted_content}"
         )
         
+    # Add thinking instruction if enabled
+    if enable_thinking and formatted_content:
+        thinking_instruction = (
+            "IMPORTANT: You MUST show your reasoning process. "
+            "Start your response with <thinking> tags containing your step-by-step reasoning, "
+            "then provide your final answer after </thinking>."
+        )
+        if thinking_budget:
+            thinking_instruction += f" Use up to {thinking_budget} tokens for thinking."
+        formatted_content = (
+            "--- THINKING MODE ENABLED ---\n"
+            f"{thinking_instruction}\n"
+            "--- END THINKING MODE ---\n\n"
+            f"{formatted_content}"
+        )
+
     if req.system and formatted_content:
         sys_text = ""
         if isinstance(req.system, str):
@@ -370,7 +390,7 @@ def convert_claude_to_amazonq_request(req: ClaudeRequest, conversation_id: Optio
                 if isinstance(b, dict) and b.get("type") == "text":
                     parts.append(b.get("text", ""))
             sys_text = "\n".join(parts)
-            
+
         if sys_text:
             formatted_content = (
                 "--- SYSTEM PROMPT BEGIN ---\n"
