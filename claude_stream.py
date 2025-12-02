@@ -45,6 +45,8 @@ try:
     build_message_stop = _parser.build_message_stop
     build_tool_use_start = _parser.build_tool_use_start
     build_tool_use_input_delta = _parser.build_tool_use_input_delta
+    build_thinking_block_start = _parser.build_thinking_block_start
+    build_thinking_delta = _parser.build_thinking_delta
 except Exception as e:
     logger.error(f"Failed to load claude_parser: {e}")
     # Fallback definitions
@@ -56,6 +58,8 @@ except Exception as e:
     def build_message_stop(*args, **kwargs): return ""
     def build_tool_use_start(*args, **kwargs): return ""
     def build_tool_use_input_delta(*args, **kwargs): return ""
+    def build_thinking_block_start(*args, **kwargs): return ""
+    def build_thinking_delta(*args, **kwargs): return ""
 
 class ClaudeStreamHandler:
     def __init__(self, model: str, input_tokens: int = 0):
@@ -68,7 +72,7 @@ class ClaudeStreamHandler:
         self.content_block_stop_sent: bool = False
         self.message_start_sent: bool = False
         self.conversation_id: Optional[str] = None
-        
+
         # Tool use state
         self.current_tool_use: Optional[Dict[str, Any]] = None
         self.tool_input_buffer: List[str] = []
@@ -76,6 +80,10 @@ class ClaudeStreamHandler:
         self.tool_name: Optional[str] = None
         self._processed_tool_use_ids: Set[str] = set()
         self.all_tool_inputs: List[str] = []
+
+        # Thinking state
+        self.thinking_buffer: List[str] = []
+        self.in_thinking_block: bool = False
 
     async def handle_event(self, event_type: str, payload: Dict[str, Any]) -> AsyncGenerator[str, None]:
         """Process a single Amazon Q event and yield Claude SSE events."""
@@ -92,24 +100,55 @@ class ClaudeStreamHandler:
         # 2. Content Block Delta (assistantResponseEvent)
         elif event_type == "assistantResponseEvent":
             content = payload.get("content", "")
-            
+
+            # Check if this is thinking content (heuristic: starts with thinking markers)
+            is_thinking = self._is_thinking_content(content, payload)
+
             # Close any open tool use block
             if self.current_tool_use and not self.content_block_stop_sent:
                 yield build_content_block_stop(self.content_block_index)
                 self.content_block_stop_sent = True
                 self.current_tool_use = None
 
-            # Start content block if needed
-            if not self.content_block_start_sent:
-                self.content_block_index += 1
-                yield build_content_block_start(self.content_block_index, "text")
-                self.content_block_start_sent = True
-                self.content_block_started = True
+            # Handle thinking block
+            if is_thinking:
+                # Close text block if open
+                if self.content_block_start_sent and not self.in_thinking_block and not self.content_block_stop_sent:
+                    yield build_content_block_stop(self.content_block_index)
+                    self.content_block_stop_sent = True
 
-            # Send delta
-            if content:
-                self.response_buffer.append(content)
-                yield build_content_block_delta(self.content_block_index, content)
+                # Start thinking block if needed
+                if not self.in_thinking_block:
+                    self.content_block_index += 1
+                    yield build_thinking_block_start(self.content_block_index)
+                    self.in_thinking_block = True
+                    self.content_block_started = True
+                    self.content_block_start_sent = True
+                    self.content_block_stop_sent = False
+
+                # Send thinking delta
+                if content:
+                    self.thinking_buffer.append(content)
+                    yield build_thinking_delta(self.content_block_index, content)
+            else:
+                # Close thinking block if open
+                if self.in_thinking_block and not self.content_block_stop_sent:
+                    yield build_content_block_stop(self.content_block_index)
+                    self.content_block_stop_sent = True
+                    self.in_thinking_block = False
+
+                # Start text content block if needed
+                if not self.content_block_start_sent or self.in_thinking_block:
+                    self.content_block_index += 1
+                    yield build_content_block_start(self.content_block_index, "text")
+                    self.content_block_start_sent = True
+                    self.content_block_started = True
+                    self.content_block_stop_sent = False
+
+                # Send delta
+                if content:
+                    self.response_buffer.append(content)
+                    yield build_content_block_delta(self.content_block_index, content)
 
         # 3. Tool Use (toolUseEvent)
         elif event_type == "toolUseEvent":
@@ -169,6 +208,22 @@ class ClaudeStreamHandler:
                 yield build_content_block_stop(self.content_block_index)
                 self.content_block_stop_sent = True
 
+    def _is_thinking_content(self, content: str, payload: Dict[str, Any]) -> bool:
+        """Heuristic to detect if content is thinking."""
+        # Check if already in thinking block
+        if self.in_thinking_block:
+            # Stay in thinking until we see clear end markers
+            if content and any(marker in content.lower() for marker in ["</thinking>", "now i'll", "now i will", "let me proceed"]):
+                return False
+            return True
+
+        # Check for thinking start markers
+        if content:
+            thinking_markers = ["<thinking>", "let me think", "i need to think", "thinking:", "my reasoning"]
+            return any(marker in content.lower() for marker in thinking_markers)
+
+        return False
+
     async def finish(self) -> AsyncGenerator[str, None]:
         """Send final events."""
         # Ensure last block is closed
@@ -179,8 +234,7 @@ class ClaudeStreamHandler:
         # Calculate output tokens (approximate)
         full_text = "".join(self.response_buffer)
         full_tool_input = "".join(self.all_tool_inputs)
-        # Simple approximation: 4 chars per token
-        # output_tokens = max(1, (len(full_text) + len(full_tool_input)) // 4)
-        output_tokens = count_tokens(full_text) + count_tokens(full_tool_input)
+        full_thinking = "".join(self.thinking_buffer)
+        output_tokens = count_tokens(full_text) + count_tokens(full_tool_input) + count_tokens(full_thinking)
 
         yield build_message_stop(self.input_tokens, output_tokens, "end_turn")
