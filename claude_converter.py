@@ -287,11 +287,27 @@ def process_history(messages: List[ClaudeMessage], thinking_enabled: bool = Fals
             
             raw_history.append(entry)
 
-    # Second pass: merge consecutive user messages
+    # Second pass: merge consecutive user messages (but NOT messages with tool results)
+    # Tool result messages should remain separate to maintain conversation structure
     pending_user_msgs = []
     for item in raw_history:
         if "userInputMessage" in item:
-            pending_user_msgs.append(item["userInputMessage"])
+            user_msg = item["userInputMessage"]
+            user_ctx = user_msg.get("userInputMessageContext", {})
+            has_tool_results = "toolResults" in user_ctx and user_ctx["toolResults"]
+            
+            # If this user message has tool results, don't merge it
+            if has_tool_results:
+                # First, flush any pending user messages
+                if pending_user_msgs:
+                    merged = merge_user_messages(pending_user_msgs)
+                    history.append({"userInputMessage": merged})
+                    pending_user_msgs = []
+                # Then add this tool result message directly (don't merge)
+                history.append(item)
+            else:
+                # Regular user message without tool results - can be merged
+                pending_user_msgs.append(user_msg)
         elif "assistantResponseMessage" in item:
             if pending_user_msgs:
                 merged = merge_user_messages(pending_user_msgs)
