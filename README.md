@@ -425,6 +425,7 @@ v2/
 | `ENABLE_CONSOLE` | 管理控制台开关 | `"true"` | `"false"` |
 | `ADMIN_PASSWORD` | 管理控制台登录密码 | `"admin"` | `"your-secure-password"` |
 | `PORT` | 服务端口 | 8000 | `8080` |
+| `DEBUG_MESSAGE_CONVERSION` | 消息转换调试日志 | `"false"` | `"true"` |
 | `LAZY_ACCOUNT_POOL_ENABLED` | 是否启用 Lazy 号池 | `"false"` | `"true"` |
 | `LAZY_ACCOUNT_POOL_SIZE` | Lazy 号池大小（聊天） | `20` | `50` |
 | `LAZY_ACCOUNT_POOL_REFRESH_OFFSET` | Lazy 号池刷新偏移量 | `10` | `20` |
@@ -485,6 +486,20 @@ CREATE TABLE accounts (
 - `GET /docs` - API 文档（Swagger UI）
 
 ## 🐛 故障排查
+
+### 工具调用无限循环
+
+**现象：**
+AI 重复调用相同的工具（如 git、bash 命令），无法停止
+
+**原因：**
+消息历史被错误合并，导致 AI 无法识别已执行的工具调用
+
+**解决方法：**
+1. 此问题已在最新版本中修复
+2. 确保使用最新版本的代码
+3. 如需调试，启用 `DEBUG_MESSAGE_CONVERSION=true`
+4. 详见 [修复文档](docs/FIX_INFINITE_LOOP_CN.md)
 
 ### 401 Unauthorized
 **可能原因：**

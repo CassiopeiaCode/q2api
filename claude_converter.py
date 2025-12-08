@@ -288,7 +288,9 @@ def process_history(messages: List[ClaudeMessage], thinking_enabled: bool = Fals
             raw_history.append(entry)
 
     # Second pass: merge consecutive user messages (but NOT messages with tool results)
-    # Tool result messages should remain separate to maintain conversation structure
+    # Tool result messages must remain separate to preserve the conversation flow that AI models 
+    # expect when processing tool execution history. Merging tool results with other messages
+    # causes the AI to lose track of completed tool calls, leading to infinite loops.
     pending_user_msgs = []
     for item in raw_history:
         if "userInputMessage" in item:
@@ -419,7 +421,9 @@ def convert_claude_to_amazonq_request(req: ClaudeRequest, conversation_id: Optio
     validation_error = _validate_message_order(req.messages)
     if validation_error:
         logger.error(f"Message validation failed: {validation_error}")
-        # Don't raise error, just log warning as we can try to process anyway
+        # Continue processing despite validation errors to maintain backwards compatibility
+        # and allow recovery from minor message order issues. Most validation failures are
+        # warnings rather than fatal errors that would prevent processing.
 
     # Detect infinite tool call loops
     loop_error = _detect_tool_call_loop(req.messages, threshold=3)
