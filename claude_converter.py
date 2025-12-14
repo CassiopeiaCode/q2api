@@ -397,21 +397,39 @@ def process_history(messages: List[ClaudeMessage], thinking_enabled: bool = Fals
     return history
 
 def _detect_tool_call_loop(messages: List[ClaudeMessage], threshold: int = 3) -> Optional[str]:
-    """Detect if the same tool is being called repeatedly (potential infinite loop)."""
+    """Detect if the same tool is being called repeatedly (potential infinite loop).
+
+    Only triggers if:
+    1. Same tool called N times with same input
+    2. All calls are in CONSECUTIVE assistant messages (no user messages between them)
+    """
     recent_tool_calls = []
+    consecutive_count = 0
+    last_tool_call = None
+
     for msg in messages[-10:]:  # Check last 10 messages
         if msg.role == "assistant" and isinstance(msg.content, list):
             for block in msg.content:
                 if isinstance(block, dict) and block.get("type") == "tool_use":
                     tool_name = block.get("name")
                     tool_input = json.dumps(block.get("input", {}), sort_keys=True)
-                    recent_tool_calls.append((tool_name, tool_input))
+                    current_call = (tool_name, tool_input)
 
-    if len(recent_tool_calls) >= threshold:
-        # Check if the last N tool calls are identical
-        last_calls = recent_tool_calls[-threshold:]
-        if len(set(last_calls)) == 1:
-            return f"Detected infinite loop: tool '{last_calls[0][0]}' called {threshold} times with same input"
+                    if current_call == last_tool_call:
+                        consecutive_count += 1
+                    else:
+                        consecutive_count = 1
+                        last_tool_call = current_call
+
+                    recent_tool_calls.append(current_call)
+        elif msg.role == "user":
+            # User message breaks the consecutive chain
+            consecutive_count = 0
+            last_tool_call = None
+
+    # Only trigger if we have consecutive identical calls
+    if consecutive_count >= threshold:
+        return f"Detected infinite loop: tool '{last_tool_call[0]}' called {consecutive_count} times consecutively with same input"
 
     return None
 
