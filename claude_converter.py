@@ -76,23 +76,27 @@ def map_model_name(claude_model: str) -> str:
     Accepts both short names (e.g., claude-sonnet-4) and canonical names
     (e.g., claude-sonnet-4-20250514).
     """
-    DEFAULT_MODEL = "auto"
+    DEFAULT_MODEL = "claude-sonnet-4.5"
 
-    # Available models in the service
-    VALID_MODELS = {"auto", "claude-sonnet-4", "claude-sonnet-4.5", "claude-haiku-4.5", "claude-opus-4.5"}
+    # Available models in the service (Amazon Q only supports these)
+    VALID_MODELS = {"auto", "claude-sonnet-4", "claude-sonnet-4.5", "claude-haiku-4.5"}
 
     # Mapping from canonical names to short names
     CANONICAL_TO_SHORT = {
         "claude-sonnet-4-20250514": "claude-sonnet-4",
         "claude-sonnet-4-5-20250929": "claude-sonnet-4.5",
         "claude-haiku-4-5-20251001": "claude-haiku-4.5",
-        "claude-opus-4-5-20251101": "claude-opus-4.5",
+        # Amazon Q doesn't support Opus - map to Sonnet 4.5 (best available model)
+        "claude-opus-4-5-20251101": "claude-sonnet-4.5",
+        # Legacy Claude 3.5 Sonnet models
+        "claude-3-5-sonnet-20241022": "claude-sonnet-4.5",
+        "claude-3-5-sonnet-20240620": "claude-sonnet-4.5",
     }
 
     model_lower = claude_model.lower()
 
-    # Check if it's a valid short name
-    if model_lower in VALID_MODELS:
+    # Check if it's a valid short name (but not "auto" which Amazon Q doesn't accept)
+    if model_lower in VALID_MODELS and model_lower != "auto":
         return model_lower
 
     # Check if it's a canonical name
@@ -286,18 +290,32 @@ def process_history(messages: List[ClaudeMessage], thinking_enabled: bool = Fals
                                     elif isinstance(item, str):
                                         aq_content.append({"text": item})
                             
+                            # Check if there's actual content
                             if not any(i.get("text", "").strip() for i in aq_content):
-                                aq_content = [{"text": "Tool use was cancelled by the user"}]
-                                
+                                # Use different message based on status
+                                if block.get("status") != "error" and not block.get("is_error"):
+                                    aq_content = [{"text": "Command executed successfully"}]
+                                else:
+                                    aq_content = [{"text": "Tool use was cancelled by the user"}]
+
+                            # Determine status: check both 'status' field and 'is_error' flag
+                            status = block.get("status")
+                            if not status:
+                                # If status not set, infer from is_error flag
+                                status = "error" if block.get("is_error") else "success"
+
                             # Merge if exists
                             existing = next((r for r in tool_results if r["toolUseId"] == tool_use_id), None)
                             if existing:
                                 existing["content"].extend(aq_content)
+                                # Update status if this is an error
+                                if status == "error":
+                                    existing["status"] = "error"
                             else:
                                 tool_results.append({
                                     "toolUseId": tool_use_id,
                                     "content": aq_content,
-                                    "status": block.get("status", "success")
+                                    "status": status
                                 })
                 text_content = "\n".join(text_parts)
             else:
@@ -388,21 +406,39 @@ def process_history(messages: List[ClaudeMessage], thinking_enabled: bool = Fals
     return history
 
 def _detect_tool_call_loop(messages: List[ClaudeMessage], threshold: int = 3) -> Optional[str]:
-    """Detect if the same tool is being called repeatedly (potential infinite loop)."""
+    """Detect if the same tool is being called repeatedly (potential infinite loop).
+
+    Only triggers if:
+    1. Same tool called N times with same input
+    2. All calls are in CONSECUTIVE assistant messages (no user messages between them)
+    """
     recent_tool_calls = []
+    consecutive_count = 0
+    last_tool_call = None
+
     for msg in messages[-10:]:  # Check last 10 messages
         if msg.role == "assistant" and isinstance(msg.content, list):
             for block in msg.content:
                 if isinstance(block, dict) and block.get("type") == "tool_use":
                     tool_name = block.get("name")
                     tool_input = json.dumps(block.get("input", {}), sort_keys=True)
-                    recent_tool_calls.append((tool_name, tool_input))
+                    current_call = (tool_name, tool_input)
 
-    if len(recent_tool_calls) >= threshold:
-        # Check if the last N tool calls are identical
-        last_calls = recent_tool_calls[-threshold:]
-        if len(set(last_calls)) == 1:
-            return f"Detected infinite loop: tool '{last_calls[0][0]}' called {threshold} times with same input"
+                    if current_call == last_tool_call:
+                        consecutive_count += 1
+                    else:
+                        consecutive_count = 1
+                        last_tool_call = current_call
+
+                    recent_tool_calls.append(current_call)
+        elif msg.role == "user":
+            # User message breaks the consecutive chain
+            consecutive_count = 0
+            last_tool_call = None
+
+    # Only trigger if we have consecutive identical calls
+    if consecutive_count >= threshold:
+        return f"Detected infinite loop: tool '{last_tool_call[0]}' called {consecutive_count} times consecutively with same input"
 
     return None
 
@@ -468,17 +504,31 @@ def convert_claude_to_amazonq_request(req: ClaudeRequest, conversation_id: Optio
                                 elif isinstance(item, str):
                                     aq_content.append({"text": item})
                                     
+                        # Check if there's actual content
                         if not any(i.get("text", "").strip() for i in aq_content):
-                            aq_content = [{"text": "Tool use was cancelled by the user"}]
-                            
+                            # Use different message based on status
+                            if block.get("status") != "error" and not block.get("is_error"):
+                                aq_content = [{"text": "Command executed successfully"}]
+                            else:
+                                aq_content = [{"text": "Tool use was cancelled by the user"}]
+
+                        # Determine status: check both 'status' field and 'is_error' flag
+                        status = block.get("status")
+                        if not status:
+                            # If status not set, infer from is_error flag
+                            status = "error" if block.get("is_error") else "success"
+
                         existing = next((r for r in tool_results if r["toolUseId"] == tid), None)
                         if existing:
                             existing["content"].extend(aq_content)
+                            # Update status if this is an error
+                            if status == "error":
+                                existing["status"] = "error"
                         else:
                             tool_results.append({
                                 "toolUseId": tid,
                                 "content": aq_content,
-                                "status": block.get("status", "success")
+                                "status": status
                             })
             prompt_content = "\n".join(text_parts)
         else:
@@ -546,7 +596,7 @@ def convert_claude_to_amazonq_request(req: ClaudeRequest, conversation_id: Optio
 
     # 5. Model
     model_id = map_model_name(req.model)
-    
+
     # 6. User Input Message
     user_input_msg = {
         "content": formatted_content,
