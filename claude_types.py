@@ -1,5 +1,5 @@
 from typing import List, Optional, Union, Dict, Any, Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, AliasChoices
 
 class ClaudeMessage(BaseModel):
     role: str
@@ -19,3 +19,7 @@ class ClaudeRequest(BaseModel):
     stream: bool = False
     system: Optional[Union[str, List[Dict[str, Any]]]] = None
     thinking: Optional[Dict[str, Any]] = None
+    conversation_id: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("conversation_id", "conversationId")
+    )

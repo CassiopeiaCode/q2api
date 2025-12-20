@@ -70,6 +70,42 @@ def get_current_timestamp() -> str:
     iso_time = now.isoformat(timespec='milliseconds')
     return f"{weekday}, {iso_time}"
 
+def _process_tool_result_block(block: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert Claude tool_result block to Amazon Q format."""
+    tool_use_id = block.get("tool_use_id")
+    raw_c = block.get("content", [])
+
+    aq_content = []
+    if isinstance(raw_c, str):
+        aq_content = [{"text": raw_c}]
+    elif isinstance(raw_c, list):
+        for item in raw_c:
+            if isinstance(item, dict):
+                if item.get("type") == "text":
+                    aq_content.append({"text": item.get("text", "")})
+                elif "text" in item:
+                    aq_content.append({"text": item["text"]})
+            elif isinstance(item, str):
+                aq_content.append({"text": item})
+
+    # Handle empty content
+    if not any(i.get("text", "").strip() for i in aq_content):
+        if block.get("status") != "error" and not block.get("is_error"):
+            aq_content = [{"text": "Command executed successfully"}]
+        else:
+            aq_content = [{"text": "Tool use was cancelled by the user"}]
+
+    # Determine status from both 'status' field and 'is_error' flag
+    status = block.get("status")
+    if not status:
+        status = "error" if block.get("is_error") else "success"
+
+    return {
+        "toolUseId": tool_use_id,
+        "content": aq_content,
+        "status": status
+    }
+
 def map_model_name(claude_model: str) -> str:
     """Map Claude model name to Amazon Q model ID.
 
@@ -273,50 +309,15 @@ def process_history(messages: List[ClaudeMessage], thinking_enabled: bool = Fals
                         elif btype == "tool_result":
                             if tool_results is None:
                                 tool_results = []
-                            
-                            tool_use_id = block.get("tool_use_id")
-                            raw_c = block.get("content", [])
-                            
-                            aq_content = []
-                            if isinstance(raw_c, str):
-                                aq_content = [{"text": raw_c}]
-                            elif isinstance(raw_c, list):
-                                for item in raw_c:
-                                    if isinstance(item, dict):
-                                        if item.get("type") == "text":
-                                            aq_content.append({"text": item.get("text", "")})
-                                        elif "text" in item:
-                                            aq_content.append({"text": item["text"]})
-                                    elif isinstance(item, str):
-                                        aq_content.append({"text": item})
-                            
-                            # Check if there's actual content
-                            if not any(i.get("text", "").strip() for i in aq_content):
-                                # Use different message based on status
-                                if block.get("status") != "error" and not block.get("is_error"):
-                                    aq_content = [{"text": "Command executed successfully"}]
-                                else:
-                                    aq_content = [{"text": "Tool use was cancelled by the user"}]
-
-                            # Determine status: check both 'status' field and 'is_error' flag
-                            status = block.get("status")
-                            if not status:
-                                # If status not set, infer from is_error flag
-                                status = "error" if block.get("is_error") else "success"
-
+                            result = _process_tool_result_block(block)
                             # Merge if exists
-                            existing = next((r for r in tool_results if r["toolUseId"] == tool_use_id), None)
+                            existing = next((r for r in tool_results if r["toolUseId"] == result["toolUseId"]), None)
                             if existing:
-                                existing["content"].extend(aq_content)
-                                # Update status if this is an error
-                                if status == "error":
+                                existing["content"].extend(result["content"])
+                                if result["status"] == "error":
                                     existing["status"] = "error"
                             else:
-                                tool_results.append({
-                                    "toolUseId": tool_use_id,
-                                    "content": aq_content,
-                                    "status": status
-                                })
+                                tool_results.append(result)
                 text_content = "\n".join(text_parts)
             else:
                 text_content = extract_text_from_content(content)
@@ -487,49 +488,15 @@ def convert_claude_to_amazonq_request(req: ClaudeRequest, conversation_id: Optio
                         has_tool_result = True
                         if tool_results is None:
                             tool_results = []
-                        
-                        tid = block.get("tool_use_id")
-                        raw_c = block.get("content", [])
-                        
-                        aq_content = []
-                        if isinstance(raw_c, str):
-                            aq_content = [{"text": raw_c}]
-                        elif isinstance(raw_c, list):
-                            for item in raw_c:
-                                if isinstance(item, dict):
-                                    if item.get("type") == "text":
-                                        aq_content.append({"text": item.get("text", "")})
-                                    elif "text" in item:
-                                        aq_content.append({"text": item["text"]})
-                                elif isinstance(item, str):
-                                    aq_content.append({"text": item})
-                                    
-                        # Check if there's actual content
-                        if not any(i.get("text", "").strip() for i in aq_content):
-                            # Use different message based on status
-                            if block.get("status") != "error" and not block.get("is_error"):
-                                aq_content = [{"text": "Command executed successfully"}]
-                            else:
-                                aq_content = [{"text": "Tool use was cancelled by the user"}]
-
-                        # Determine status: check both 'status' field and 'is_error' flag
-                        status = block.get("status")
-                        if not status:
-                            # If status not set, infer from is_error flag
-                            status = "error" if block.get("is_error") else "success"
-
-                        existing = next((r for r in tool_results if r["toolUseId"] == tid), None)
+                        result = _process_tool_result_block(block)
+                        # Merge if exists
+                        existing = next((r for r in tool_results if r["toolUseId"] == result["toolUseId"]), None)
                         if existing:
-                            existing["content"].extend(aq_content)
-                            # Update status if this is an error
-                            if status == "error":
+                            existing["content"].extend(result["content"])
+                            if result["status"] == "error":
                                 existing["status"] = "error"
                         else:
-                            tool_results.append({
-                                "toolUseId": tid,
-                                "content": aq_content,
-                                "status": status
-                            })
+                            tool_results.append(result)
             prompt_content = "\n".join(text_parts)
         else:
             prompt_content = extract_text_from_content(content)
