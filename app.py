@@ -197,6 +197,9 @@ async def _recycle_global_client():
     
     策略：先创建新客户端，等待2分钟后再关闭旧客户端，确保平滑过渡
     """
+    # 跟踪待关闭的旧客户端，避免累积
+    pending_close_clients = []
+    
     while True:
         try:
             await asyncio.sleep(60)  # 每1分钟回收一次
@@ -235,34 +238,67 @@ async def _recycle_global_client():
             
             # 在独立任务中延迟关闭旧客户端（不阻塞主循环）
             if old_client:
-                async def _force_close_old_client():
+                # 添加到待关闭列表
+                pending_close_clients.append(old_client)
+                
+                async def _force_close_old_client(client_to_close):
                     try:
                         await asyncio.sleep(120)  # 等待2分钟
+                        logger.info("[连接回收] 开始强制关闭旧客户端...")
+                        
                         # 强制关闭，不等待正在进行的请求
                         try:
-                            # 方式1: 直接关闭底层传输，更激进
-                            if hasattr(old_client, '_transport'):
-                                for transport in getattr(old_client._transport, '_pool', []):
-                                    try:
-                                        transport.close()
-                                    except:
-                                        pass
-                            
-                            # 方式2: 使用超时的aclose
-                            await asyncio.wait_for(old_client.aclose(), timeout=1.0)
-                            logger.info("[连接回收] 旧客户端已强制关闭")
+                            # 尝试优雅关闭，但设置短超时
+                            await asyncio.wait_for(client_to_close.aclose(), timeout=2.0)
+                            logger.info("[连接回收] 旧客户端已成功关闭")
                         except asyncio.TimeoutError:
-                            logger.warning("[连接回收] 旧客户端关闭超时，已强制终止底层连接")
-                            # 超时后直接删除引用，让GC回收
-                            del old_client
+                            logger.warning("[连接回收] 旧客户端关闭超时，尝试强制终止...")
+                            # 超时后尝试访问底层连接池强制关闭
+                            try:
+                                # httpx 内部结构：client -> _transport -> _pool
+                                if hasattr(client_to_close, '_transport') and client_to_close._transport:
+                                    transport = client_to_close._transport
+                                    # 尝试关闭底层连接池
+                                    if hasattr(transport, '_pool'):
+                                        pool = transport._pool
+                                        # 强制关闭连接池（不等待）
+                                        try:
+                                            await asyncio.wait_for(pool.aclose(), timeout=0.5)
+                                        except:
+                                            pass
+                                logger.info("[连接回收] 已尝试强制终止底层连接")
+                            except Exception as e:
+                                logger.warning(f"[连接回收] 强制终止底层连接失败: {e}")
                         except Exception as e:
-                            logger.warning(f"[连接回收] 强制关闭旧客户端时出错: {e}")
+                            logger.warning(f"[连接回收] 关闭旧客户端时出错: {e}")
+                        finally:
+                            # 从待关闭列表中移除
+                            try:
+                                pending_close_clients.remove(client_to_close)
+                            except ValueError:
+                                pass
+                            logger.info(f"[连接回收] 当前待关闭客户端数量: {len(pending_close_clients)}")
                     except Exception as e:
                         logger.error(f"[连接回收] 延迟关闭任务失败: {e}")
+                        traceback.print_exc()
                 
                 # 创建独立任务，不等待其完成
-                asyncio.create_task(_force_close_old_client())
+                asyncio.create_task(_force_close_old_client(old_client))
                 logger.info("[连接回收] 已启动旧客户端延迟关闭任务")
+            
+            # 清理过多的待关闭客户端（防止累积）
+            if len(pending_close_clients) > 5:
+                logger.warning(f"[连接回收] 待关闭客户端过多({len(pending_close_clients)})，可能存在关闭失败")
+            
+        except Exception as e:
+            logger.error(f"[连接回收] 回收失败: {e}")
+            traceback.print_exc()
+            # 确保客户端可用
+            try:
+                if GLOBAL_CLIENT is None:
+                    await _init_global_client()
+            except Exception:
+                pass
             
         except Exception as e:
             logger.error(f"[连接回收] 回收失败: {e}")
