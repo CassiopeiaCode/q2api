@@ -233,16 +233,26 @@ async def _recycle_global_client():
             GLOBAL_CLIENT = httpx.AsyncClient(mounts=mounts, timeout=timeout, limits=limits)
             logger.info("[连接回收] 新客户端已创建，等待120秒后关闭旧客户端...")
             
-            # 等待2分钟，让正在使用旧客户端的请求完成
-            await asyncio.sleep(120)
-            
-            # 关闭旧客户端
+            # 在独立任务中延迟关闭旧客户端（不阻塞主循环）
             if old_client:
-                try:
-                    await old_client.aclose()
-                    logger.info("[连接回收] 旧客户端已关闭，回收完成")
-                except Exception as e:
-                    logger.warning(f"[连接回收] 关闭旧客户端时出错: {e}")
+                async def _force_close_old_client():
+                    try:
+                        await asyncio.sleep(120)  # 等待2分钟
+                        # 强制关闭，不等待正在进行的请求
+                        try:
+                            # 直接关闭底层传输，不等待优雅关闭
+                            await asyncio.wait_for(old_client.aclose(), timeout=1.0)
+                            logger.info("[连接回收] 旧客户端已强制关闭")
+                        except asyncio.TimeoutError:
+                            logger.warning("[连接回收] 旧客户端关闭超时，已放弃等待")
+                        except Exception as e:
+                            logger.warning(f"[连接回收] 强制关闭旧客户端时出错: {e}")
+                    except Exception as e:
+                        logger.error(f"[连接回收] 延迟关闭任务失败: {e}")
+                
+                # 创建独立任务，不等待其完成
+                asyncio.create_task(_force_close_old_client())
+                logger.info("[连接回收] 已启动旧客户端延迟关闭任务")
             
         except Exception as e:
             logger.error(f"[连接回收] 回收失败: {e}")
