@@ -195,11 +195,11 @@ async def _close_global_client():
 async def _recycle_global_client():
     """定期回收并重建全局HTTP客户端，避免死连接累积
     
-    策略：先创建新客户端，等待1分钟后再关闭旧客户端，确保平滑过渡
+    策略：先创建新客户端，等待2分钟后再关闭旧客户端，确保平滑过渡
     """
     while True:
         try:
-            await asyncio.sleep(180)  # 每3分钟回收一次
+            await asyncio.sleep(60)  # 每1分钟回收一次
             logger.info("[连接回收] 开始回收全局HTTP客户端...")
             
             # 保存旧客户端引用
@@ -231,10 +231,10 @@ async def _recycle_global_client():
             
             # 替换为新客户端
             GLOBAL_CLIENT = httpx.AsyncClient(mounts=mounts, timeout=timeout, limits=limits)
-            logger.info("[连接回收] 新客户端已创建，等待60秒后关闭旧客户端...")
+            logger.info("[连接回收] 新客户端已创建，等待120秒后关闭旧客户端...")
             
-            # 等待1分钟，让正在使用旧客户端的请求完成
-            await asyncio.sleep(60)
+            # 等待2分钟，让正在使用旧客户端的请求完成
+            await asyncio.sleep(120)
             
             # 关闭旧客户端
             if old_client:
