@@ -18,7 +18,7 @@ OIDC_BASE = "https://oidc.us-east-1.amazonaws.com"
 REGISTER_URL = f"{OIDC_BASE}/client/register"
 DEVICE_AUTH_URL = f"{OIDC_BASE}/device_authorization"
 TOKEN_URL = f"{OIDC_BASE}/token"
-START_URL = "https://view.awsapps.com/start"
+DEFAULT_START_URL = "https://view.awsapps.com/start"
 
 USER_AGENT = "aws-sdk-rust/1.3.9 os/windows lang/rust/1.87.0"
 X_AMZ_USER_AGENT = "aws-sdk-rust/1.3.9 ua/2.1 api/ssooidc/1.88.0 os/windows lang/rust/1.87.0 m/E app/AmazonQ-For-CLI"
@@ -72,7 +72,7 @@ async def register_client_min() -> Tuple[str, str]:
         return data["clientId"], data["clientSecret"]
 
 
-async def device_authorize(client_id: str, client_secret: str) -> Dict:
+async def device_authorize(client_id: str, client_secret: str, start_url: Optional[str] = None) -> Dict:
     """
     Start device authorization. Returns dict that includes:
     - deviceCode
@@ -84,7 +84,7 @@ async def device_authorize(client_id: str, client_secret: str) -> Dict:
     payload = {
         "clientId": client_id,
         "clientSecret": client_secret,
-        "startUrl": START_URL,
+        "startUrl": start_url or DEFAULT_START_URL,
     }
     proxies = _get_proxies()
     mounts = None

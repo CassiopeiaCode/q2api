@@ -13,7 +13,7 @@ services:
     volumes:
       - ./:/app
     restart: unless-stopped
-    command: uvicorn app:app --host 0.0.0.0 --port 8000 --workers 4
+    command: uvicorn app:app --host 0.0.0.0 --port 8000 --workers 1
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
       interval: 30s
