@@ -1271,6 +1271,7 @@ AUTH_SESSIONS: Dict[str, Dict[str, Any]] = {}
 class AuthStartBody(BaseModel):
     label: Optional[str] = None
     enabled: Optional[bool] = True
+    start_url: Optional[str] = None
 
 class AdminLoginRequest(BaseModel):
     password: str
@@ -1353,7 +1354,7 @@ if CONSOLE_ENABLED:
         """
         try:
             cid, csec = await register_client_min()
-            dev = await device_authorize(cid, csec)
+            dev = await device_authorize(cid, csec, start_url=body.start_url)
         except httpx.HTTPError as e:
             raise HTTPException(status_code=502, detail=f"OIDC error: {str(e)}")
 

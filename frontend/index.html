@@ -266,6 +266,7 @@
         <h2>URL 登录（5分钟超时）</h2>
         <div class="row">
           <div class="field"><label>label（可选）</label><input id="auth_label" /></div>
+          <div class="field"><label>Start URL（留空使用个人版；企业版填组织 URL，如 https://your-company.awsapps.com/start）</label><input id="auth_start_url" placeholder="https://view.awsapps.com/start" /></div>
           <div class="field" style="max-width:220px">
             <label>启用（登录成功后新账号是否启用）</label>
             <div>
@@ -757,7 +758,8 @@ async function refreshAccount(id){
  async function startAuth(){
    const body = {
      label: (document.getElementById('auth_label').value || '').trim() || null,
-     enabled: document.getElementById('auth_enabled').checked
+     enabled: document.getElementById('auth_enabled').checked,
+     start_url: (document.getElementById('auth_start_url').value || '').trim() || null,
    };
    try {
      const r = await authFetch(api('/v2/auth/start'), {

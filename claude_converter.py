@@ -115,7 +115,7 @@ def map_model_name(claude_model: str) -> str:
     DEFAULT_MODEL = "claude-sonnet-4.5"
 
     # Available models in the service (with KIRO_CLI origin)
-    VALID_MODELS = {"auto", "claude-sonnet-4", "claude-sonnet-4.5", "claude-haiku-4.5", "claude-opus-4.5"}
+    VALID_MODELS = {"auto", "claude-sonnet-4", "claude-sonnet-4.5", "claude-haiku-4.5", "claude-opus-4.5", "claude-sonnet-4.6", "claude-opus-4.6", "claude-opus-4.7"}
 
     # Mapping from canonical names to short names
     CANONICAL_TO_SHORT = {
